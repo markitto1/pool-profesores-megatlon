@@ -347,6 +347,51 @@ tbody td { padding: 10px 12px; vertical-align: middle; }
   100%{ transform: translateX(100%);  }
 }
 
+/* ── TABS ────────────────────────────────────────── */
+.tab-nav {
+  background: var(--white);
+  border-bottom: 1px solid var(--border);
+  padding: 0 28px;
+  display: flex;
+  gap: 0;
+}
+.tab-btn {
+  background: none; border: none; border-bottom: 3px solid transparent;
+  padding: 14px 22px 11px;
+  font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 2px;
+  color: var(--muted); cursor: pointer; transition: all 0.15s;
+  margin-bottom: -1px;
+}
+.tab-btn:hover { color: var(--charcoal); }
+.tab-btn.active { color: var(--black); border-bottom-color: var(--black); }
+
+/* ── GESTIÓN CLASES ──────────────────────────────── */
+.clases-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px;
+}
+.clase-item {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 2px; padding: 8px 12px;
+  font-size: 12px; font-weight: 600; color: var(--charcoal);
+}
+.clase-del {
+  background: none; border: none; color: var(--dim); font-size: 13px;
+  cursor: pointer; padding: 0 4px; transition: color 0.15s; line-height: 1;
+}
+.clase-del:hover { color: var(--red-text); }
+.nueva-clase-row {
+  display: flex; gap: 10px; align-items: center; margin-bottom: 20px;
+}
+.nueva-clase-row input {
+  flex: 1; background: var(--white); border: 1px solid var(--border);
+  color: var(--charcoal); padding: 9px 12px; border-radius: 2px;
+  font-size: 13px; font-family: inherit; max-width: 340px;
+}
+.nueva-clase-row input:focus { outline: none; border-color: var(--black); }
+
 @media (max-width: 768px) {
   .header { padding: 0 16px; }
   .header-stats { gap: 16px; }
@@ -354,6 +399,7 @@ tbody td { padding: 10px 12px; vertical-align: middle; }
   .main { padding: 16px; }
   .form-grid { grid-template-columns: 1fr 1fr; }
   .fg2.col2 { grid-column: 1 / -1; }
+  .tab-nav { padding: 0 16px; }
 }
 </style>
 </head>
@@ -380,7 +426,16 @@ tbody td { padding: 10px 12px; vertical-align: middle; }
   </div>
 </div>
 
+<!-- TAB NAV -->
+<div class="tab-nav">
+  <button class="tab-btn active" id="tab-btn-pool" onclick="switchTab('pool')">Pool de Profesores</button>
+  <button class="tab-btn" id="tab-btn-clases" onclick="switchTab('clases')">Gestión de Clases</button>
+</div>
+
 <div class="main">
+
+  <!-- ═══ TAB POOL ════════════════════════════════════════ -->
+  <div id="tab-pool">
 
   <!-- ── BUSCAR REEMPLAZO ───────────────────────────────── -->
   <div class="card card-dark">
@@ -479,6 +534,26 @@ tbody td { padding: 10px 12px; vertical-align: middle; }
       </div>
       <div id="pool-empty" class="no-results" style="display:none;"></div>
       <div class="pool-footer" id="pool-count"></div>
+    </div>
+  </div>
+
+  </div><!-- /tab-pool -->
+
+  <!-- ═══ TAB CLASES ═══════════════════════════════════════ -->
+  <div id="tab-clases" style="display:none;">
+    <div class="card">
+      <div class="card-head">
+        <div class="card-title">Clases Disponibles</div>
+        <span style="font-size:9px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;" id="clases-count"></span>
+      </div>
+      <div class="card-body">
+        <div class="nueva-clase-row">
+          <input type="text" id="nueva-clase-input" placeholder="Nueva clase (Ej: Hyrox, CrossFit...)"
+            onkeydown="if(event.key==='Enter') agregarClase()">
+          <button class="btn btn-black btn-sm" onclick="agregarClase()">+ Agregar Clase</button>
+        </div>
+        <div class="clases-grid" id="clases-grid"></div>
+      </div>
     </div>
   </div>
 
@@ -597,7 +672,7 @@ const ZONAS = [
   'Zona Norte (Pilar)'
 ];
 
-const TECNICAS = [
+const TECNICAS_DEFAULT = [
   '3x30','Acuatica','Acuatica con Bandas','Acuatica en Circuito','Acuatica Max',
   'Acuatica Profunda','Aero Combat','Aero Dance','Aero Jump','Aerolocal',
   'Aerolocal Max','Ashtanga Yoga','Body Attack','Body Pump','Boxeo',
@@ -611,6 +686,8 @@ const TECNICAS = [
   'Spinning','Spinning + Kranking','Spinning + Taller de Abs','Step',
   'X55','Yoga','Zumba','Zumba Fitness'
 ];
+let TECNICAS = [];         // se carga desde Supabase
+let tecnicasData = [];     // [{id, nombre}] desde Supabase
 
 /* ═══════════════════════════════ STATE ══════════════════════════════ */
 let poolData   = [];   // datos de Supabase
@@ -690,13 +767,44 @@ async function deleteProf(id) {
   if (error) throw error;
 }
 
+/* ════════════════ CRUD TÉCNICAS ════════════════════ */
+async function loadTecnicas() {
+  const { data, error } = await sb.from('tecnicas').select('*').order('nombre', { ascending: true });
+  if (error) { console.error(error); return; }
+
+  // Si la tabla está vacía, la sembramos con los defaults
+  if (!data || data.length === 0) {
+    const rows = TECNICAS_DEFAULT.map(n => ({ nombre: n }));
+    const { data: seeded, error: seedErr } = await sb.from('tecnicas').insert(rows).select();
+    if (seedErr) { console.error(seedErr); return; }
+    tecnicasData = (seeded || []).sort((a,b) => a.nombre.localeCompare(b.nombre));
+  } else {
+    tecnicasData = data;
+  }
+  TECNICAS = tecnicasData.map(t => t.nombre);
+}
+
+async function insertTecnica(nombre) {
+  const { data, error } = await sb.from('tecnicas').insert({ nombre }).select().single();
+  if (error) throw error;
+  return data;
+}
+
+async function deleteTecnicaDB(id) {
+  const { error } = await sb.from('tecnicas').delete().eq('id', id);
+  if (error) throw error;
+}
+
 /* ═══════════════════════════════ INIT ═══════════════════════════════ */
-async function init() {
+function populateTechSelects() {
   ['r-tech','p-tech','f-tech-pick'].forEach(id => {
     const s = document.getElementById(id);
     const first = s.options[0]; s.innerHTML = ''; s.appendChild(first);
     TECNICAS.forEach(t => addOpt(s, t));
   });
+}
+
+async function init() {
   ['r-sede','p-sede','f-sede'].forEach(id => {
     const s = document.getElementById(id);
     const first = s.options[0]; s.innerHTML = ''; s.appendChild(first);
@@ -705,6 +813,8 @@ async function init() {
   const fz = document.getElementById('f-zona');
   ZONAS.forEach(z => addOpt(fz, z));
 
+  await loadTecnicas();
+  populateTechSelects();
   await loadData();
 }
 
@@ -985,6 +1095,76 @@ async function delProf(id, nombre) {
     console.error(err);
     setSyncStatus('err', 'Error al eliminar');
     alert('No se pudo eliminar. Revisá la conexión.');
+  } finally {
+    setLoading(false);
+  }
+}
+
+/* ════════════════ TAB SWITCH ════════════════════════ */
+function switchTab(tab) {
+  document.getElementById('tab-pool').style.display   = tab === 'pool'   ? '' : 'none';
+  document.getElementById('tab-clases').style.display = tab === 'clases' ? '' : 'none';
+  document.getElementById('tab-btn-pool').classList.toggle('active',   tab === 'pool');
+  document.getElementById('tab-btn-clases').classList.toggle('active', tab === 'clases');
+  if (tab === 'clases') renderClasesTab();
+}
+
+/* ════════════════ GESTIÓN CLASES ════════════════════ */
+function renderClasesTab() {
+  const grid  = document.getElementById('clases-grid');
+  const count = document.getElementById('clases-count');
+  count.textContent = `${tecnicasData.length} clase${tecnicasData.length !== 1 ? 's' : ''}`;
+  grid.innerHTML = tecnicasData.map(t =>
+    `<div class="clase-item">
+      <span>${t.nombre}</span>
+      <button class="clase-del" onclick="eliminarClase('${t.id}','${t.nombre.replace(/'/g,"\\'")}') " title="Eliminar">✕</button>
+    </div>`
+  ).join('');
+}
+
+async function agregarClase() {
+  const input  = document.getElementById('nueva-clase-input');
+  const nombre = input.value.trim();
+  if (!nombre) return;
+  if (tecnicasData.some(t => t.nombre.toLowerCase() === nombre.toLowerCase())) {
+    alert('Esa clase ya existe.');
+    return;
+  }
+  setLoading(true);
+  setSyncStatus('loading', 'Guardando…');
+  try {
+    const nueva = await insertTecnica(nombre);
+    tecnicasData.push(nueva);
+    tecnicasData.sort((a,b) => a.nombre.localeCompare(b.nombre));
+    TECNICAS = tecnicasData.map(t => t.nombre);
+    populateTechSelects();
+    input.value = '';
+    renderClasesTab();
+    setSyncStatus('ok', 'Sincronizado');
+  } catch(err) {
+    console.error(err);
+    setSyncStatus('err', 'Error al guardar');
+    alert('No se pudo agregar la clase.');
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function eliminarClase(id, nombre) {
+  if (!confirm(`¿Eliminar la clase "${nombre}"?`)) return;
+  setLoading(true);
+  setSyncStatus('loading', 'Eliminando…');
+  try {
+    await deleteTecnicaDB(id);
+    tecnicasData = tecnicasData.filter(t => t.id !== id);
+    TECNICAS = tecnicasData.map(t => t.nombre);
+    populateTechSelects();
+    renderClasesTab();
+    setSyncStatus('ok', 'Sincronizado');
+  } catch(err) {
+    console.error(err);
+    setSyncStatus('err', 'Error al eliminar');
+    alert('No se pudo eliminar la clase.');
   } finally {
     setLoading(false);
   }
